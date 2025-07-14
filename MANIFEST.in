@@ -1,0 +1,17 @@
+# 包含所有库文件到源分发中
+recursive-include src/osgb23dtiles/libs *.so *.dylib *.dll *.lib *.exp
+
+# 包含Windows库文件目录
+graft src/osgb23dtiles/libs/windows_lib
+
+# 包含文档文件
+include README.md
+include LICENSE*
+
+# 排除不需要的文件
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude *.pyd
+global-exclude __pycache__
+global-exclude .DS_Store
+global-exclude *.so.dSYM

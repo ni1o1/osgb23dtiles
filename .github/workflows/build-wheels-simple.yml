@@ -1,0 +1,185 @@
+name: Build Wheels (Simple)
+
+# 简化版的多平台wheel构建工作流
+# 适用于开发和测试阶段，不包含发布功能
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS Intel
+          - os: macos-12  # Intel Mac
+            platform: "macOS-x86_64"
+            arch_cmd: "arch -x86_64"
+          
+          # macOS Apple Silicon (需要macOS 14+的runner)
+          - os: macos-14  # Apple Silicon Mac
+            platform: "macOS-arm64"
+            arch_cmd: "arch -arm64"
+          
+          # Linux
+          - os: ubuntu-latest
+            platform: "Linux-x86_64"
+            arch_cmd: ""
+          
+          # Windows
+          - os: windows-latest
+            platform: "Windows-x64"
+            arch_cmd: ""
+
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+
+    - name: 设置Python 3.8
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.8'
+
+    - name: 安装构建依赖
+      run: |
+        python -m pip install --upgrade pip
+        pip install wheel setuptools
+
+    - name: 构建wheel包 (macOS)
+      if: startsWith(matrix.os, 'macos')
+      run: |
+        ${{ matrix.arch_cmd }} python build_wheels.py
+
+    - name: 构建wheel包 (Linux/Windows)
+      if: "!startsWith(matrix.os, 'macos')"
+      run: |
+        python build_wheels.py
+
+    - name: 显示构建结果
+      shell: bash
+      run: |
+        echo "=== 构建完成的文件 ==="
+        ls -la dist/ || dir dist
+        echo ""
+        echo "=== 平台: ${{ matrix.platform }} ==="
+        
+        # 检查wheel文件内容
+        for file in dist/*.whl; do
+          if [ -f "$file" ]; then
+            echo "📦 $(basename "$file")"
+            # 在不同平台上检查文件内容
+            if command -v unzip >/dev/null 2>&1; then
+              echo "   库文件:"
+              unzip -l "$file" | grep -E '\.(dylib|so|dll)$' | sed 's/^/     /' || echo "     (未找到库文件)"
+            fi
+          fi
+        done
+
+    - name: 测试wheel安装
+      shell: bash
+      run: |
+        # 创建测试环境
+        python -m venv test_install
+        
+        # 激活虚拟环境
+        if [[ "$RUNNER_OS" == "Windows" ]]; then
+          source test_install/Scripts/activate
+        else
+          source test_install/bin/activate
+        fi
+        
+        # 安装并测试
+        pip install dist/*.whl
+        python -c "import osgb23dtiles; print('✅ ${{ matrix.platform }} 安装测试成功!')"
+
+    - name: 上传构建产物
+      uses: actions/upload-artifact@v3
+      with:
+        name: wheels-${{ matrix.platform }}
+        path: |
+          dist/*.whl
+          dist/*.tar.gz
+        retention-days: 7
+
+  # 汇总所有构建结果
+  summary:
+    name: 构建汇总
+    needs: build
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+    - name: 下载所有构建产物
+      uses: actions/download-artifact@v3
+      with:
+        path: all-wheels
+
+    - name: 显示所有构建结果
+      run: |
+        echo "=== 所有平台构建结果汇总 ==="
+        echo ""
+        
+        total_wheels=0
+        for platform_dir in all-wheels/wheels-*/; do
+          if [ -d "$platform_dir" ]; then
+            platform=$(basename "$platform_dir" | sed 's/wheels-//')
+            echo "🔧 $platform:"
+            
+            wheel_count=0
+            for wheel in "$platform_dir"*.whl; do
+              if [ -f "$wheel" ]; then
+                echo "   📦 $(basename "$wheel")"
+                ((wheel_count++))
+                ((total_wheels++))
+              fi
+            done
+            
+            if [ $wheel_count -eq 0 ]; then
+              echo "   ❌ 未找到wheel文件"
+            fi
+            echo ""
+          fi
+        done
+        
+        echo "📊 总计构建了 $total_wheels 个wheel包"
+        
+        # 检查是否所有平台都成功构建
+        expected_platforms=("macOS-x86_64" "macOS-arm64" "Linux-x86_64" "Windows-x64")
+        missing_platforms=()
+        
+        for platform in "${expected_platforms[@]}"; do
+          if [ ! -d "all-wheels/wheels-$platform" ]; then
+            missing_platforms+=("$platform")
+          fi
+        done
+        
+        if [ ${#missing_platforms[@]} -eq 0 ]; then
+          echo "✅ 所有平台构建成功！"
+        else
+          echo "⚠️  缺失平台: ${missing_platforms[*]}"
+        fi
+
+    - name: 创建发布包
+      run: |
+        mkdir -p release-ready
+        
+        # 收集所有wheel文件
+        find all-wheels -name "*.whl" -exec cp {} release-ready/ \;
+        find all-wheels -name "*.tar.gz" -exec cp {} release-ready/ \;
+        
+        echo "=== 准备发布的文件 ==="
+        ls -la release-ready/
+
+    - name: 上传发布包
+      uses: actions/upload-artifact@v3
+      with:
+        name: release-ready-all-platforms
+        path: release-ready/*
+        retention-days: 30
