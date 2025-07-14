@@ -5,7 +5,7 @@ A Python package to convert OSGB files to 3D Tiles. Build based on [https://gith
 ## Installation
 
 ```bash
-pip install .
+pip install osgb23dtiles
 ```
 
 ## Usage
@@ -19,9 +19,3 @@ osgb_to_b3dm_3dtiles('input_dir', 'output_dir')
 # Convert single OSGB to GLB
 osgb_to_glb('input.osgb', 'output.glb')
 ```
-
-For Windows, ensure the DLL dependencies are in PATH.
-
-## Documentation
-
-See the docs built with MkDocs.
